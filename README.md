@@ -1,9 +1,9 @@
 # HA Utility Costs
 
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/release/bher20/ha-utility-costs.svg)](https://github.com/bher20/ha-utility-costs/releases)
+[![GitHub Release](https://img.shields.io/github/release/bherville/ha-utility-costs.svg)](https://github.com/bherville/ha-utility-costs/releases)
 
-A Home Assistant custom integration for tracking utility rates from [eRateManager](https://github.com/bher20/eratemanager).
+A Home Assistant custom integration for tracking utility rates from [eRateManager](https://github.com/bherville/eratemanager).
 
 ## Features
 
@@ -29,7 +29,7 @@ A Home Assistant custom integration for tracking utility rates from [eRateManage
 1. Open HACS in Home Assistant
 2. Click on "Integrations"
 3. Click the three dots menu → "Custom repositories"
-4. Add `https://github.com/bher20/ha-utility-costs` as an Integration
+4. Add `https://github.com/bherville/ha-utility-costs` as an Integration
 5. Search for "HA Utility Costs" and install
 6. Restart Home Assistant
 
@@ -71,7 +71,7 @@ A Home Assistant custom integration for tracking utility rates from [eRateManage
 
 ## Requirements
 
-This integration requires a running [eRateManager](https://github.com/bher20/eratemanager) backend instance.
+This integration requires a running [eRateManager](https://github.com/bherville/eratemanager) backend instance.
 
 ## Migration from ha-energy-cost
 
