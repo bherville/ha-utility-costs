@@ -1,0 +1,65 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to eRateManager",
+        "description": "Enter the API URL for your eRateManager instance and select the utility type.",
+        "data": {
+          "api_url": "API URL",
+          "provider_type": "Utility Type"
+        }
+      },
+      "provider": {
+        "title": "Select Provider",
+        "description": "Choose your utility provider.",
+        "data": {
+          "provider": "Provider"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the eRateManager API",
+      "invalid_provider": "Invalid provider selected"
+    },
+    "abort": {
+      "already_configured": "This provider is already configured"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "total_rate": {
+        "name": "Total energy rate"
+      },
+      "fixed_charge": {
+        "name": "Fixed customer charge"
+      },
+      "last_refresh": {
+        "name": "Rates last refresh"
+      },
+      "age_hours": {
+        "name": "Rates age"
+      },
+      "energy_price": {
+        "name": "Energy price"
+      },
+      "daily_fixed_cost": {
+        "name": "Daily fixed cost"
+      },
+      "monthly_fixed_cost": {
+        "name": "Monthly fixed cost"
+      },
+      "water_usage_rate": {
+        "name": "Water usage rate"
+      },
+      "water_base_charge": {
+        "name": "Water base charge"
+      },
+      "sewer_usage_rate": {
+        "name": "Sewer usage rate"
+      },
+      "sewer_base_charge": {
+        "name": "Sewer base charge"
+      }
+    }
+  }
+}

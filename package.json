@@ -1,0 +1,11 @@
+{
+  "name": "ha-utility-costs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "release": "node scripts/release.js"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1"
+  }
+}
