@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "version": "changeset version && node scripts/sync-version.js",
     "release": "node scripts/release.js"
   },
   "devDependencies": {
