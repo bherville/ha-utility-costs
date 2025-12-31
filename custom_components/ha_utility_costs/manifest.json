@@ -1,0 +1,12 @@
+{
+  "domain": "ha_utility_costs",
+  "name": "HA Utility Costs",
+  "codeowners": ["@bher20"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/bher20/ha-utility-costs",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/bher20/ha-utility-costs/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
