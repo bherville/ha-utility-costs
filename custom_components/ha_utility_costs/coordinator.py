@@ -32,18 +32,24 @@ class ElectricRatesCoordinator(DataUpdateCoordinator[dict]):
         )
 
     async def _async_update_data(self) -> dict:
-        url = f"{self.api_url}/rates/{self.provider}/residential"
+        url = f"{self.api_url}/rates/electric/{self.provider}/residential"
         session = aiohttp_client.async_get_clientsession(self.hass)
-        headers = {}
+        headers = {"User-Agent": "ha-utility-costs/1.0"}
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
 
+        LOGGER.debug("Fetching electric rates from: %s", url)
+
         try:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=headers, timeout=30) as resp:
                 if resp.status != 200:
+                    LOGGER.error("HTTP %s from %s", resp.status, url)
                     raise UpdateFailed(f"HTTP {resp.status} from {url}")
                 data = await resp.json()
+        except UpdateFailed:
+            raise
         except Exception as err:
+            LOGGER.error("Error fetching %s: %s", url, err)
             raise UpdateFailed(f"Error fetching {url}: {err}") from err
 
         if not isinstance(data, dict):
@@ -71,16 +77,22 @@ class WaterRatesCoordinator(DataUpdateCoordinator[dict]):
     async def _async_update_data(self) -> dict:
         url = f"{self.api_url}/water/rates/{self.provider}"
         session = aiohttp_client.async_get_clientsession(self.hass)
-        headers = {}
+        headers = {"User-Agent": "ha-utility-costs/1.0"}
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
 
+        LOGGER.debug("Fetching water rates from: %s", url)
+
         try:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=headers, timeout=30) as resp:
                 if resp.status != 200:
+                    LOGGER.error("HTTP %s from %s", resp.status, url)
                     raise UpdateFailed(f"HTTP {resp.status} from {url}")
                 data = await resp.json()
+        except UpdateFailed:
+            raise
         except Exception as err:
+            LOGGER.error("Error fetching %s: %s", url, err)
             raise UpdateFailed(f"Error fetching {url}: {err}") from err
 
         if not isinstance(data, dict):

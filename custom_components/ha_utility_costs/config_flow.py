@@ -100,16 +100,19 @@ async def _fetch_water_providers(hass, api_url: str, api_token: str | None = Non
 
 
 async def _validate_electric_provider(hass, api_url: str, provider_key: str, api_token: str | None = None) -> dict:
-    """Validate that /rates/{provider}/residential works."""
+    """Validate that /rates/electric/{provider}/residential works."""
     api_url = api_url.rstrip("/")
-    url = f"{api_url}/rates/{provider_key}/residential"
+    url = f"{api_url}/rates/electric/{provider_key}/residential"
     session = aiohttp_client.async_get_clientsession(hass)
     headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
 
+    _LOGGER.debug("Validating electric provider at: %s", url)
+
     try:
         async with session.get(url, headers=headers, timeout=10) as resp:
+            _LOGGER.debug("Response status: %s", resp.status)
             if resp.status == 401:
                 raise ValueError("Unauthorized - check your API token")
             if resp.status == 404:
@@ -120,6 +123,7 @@ async def _validate_electric_provider(hass, api_url: str, provider_key: str, api
     except ValueError:
         raise
     except Exception as err:
+        _LOGGER.error("Connection error validating provider: %s", err)
         raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
     if "rates" not in data:
