@@ -6,8 +6,8 @@
         "description": "Enter the API URL for your eRateManager instance, optionally provide an API token for authentication, and select the utility type.",
         "data": {
           "api_url": "API URL",
-          "api_token": "API Token (optional)",
-          "provider_type": "Utility Type"
+          "api_token": "API Token",
+          "provider_type": "Provider Type"
         }
       },
       "provider": {
