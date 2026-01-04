@@ -9,7 +9,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import aiohttp_client
 
-from .const import DOMAIN, CONF_API_URL, CONF_PROVIDER, CONF_PROVIDER_TYPE
+from .const import DOMAIN, CONF_API_URL, CONF_API_TOKEN, CONF_PROVIDER, CONF_PROVIDER_TYPE
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_SCAN_INTERVAL = 900  # seconds
@@ -21,6 +21,7 @@ class ElectricRatesCoordinator(DataUpdateCoordinator[dict]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.api_url: str = entry.data[CONF_API_URL].rstrip("/")
+        self.api_token: str | None = entry.data.get(CONF_API_TOKEN)
         self.provider: str = entry.data[CONF_PROVIDER]
 
         super().__init__(
@@ -33,9 +34,12 @@ class ElectricRatesCoordinator(DataUpdateCoordinator[dict]):
     async def _async_update_data(self) -> dict:
         url = f"{self.api_url}/rates/{self.provider}/residential"
         session = aiohttp_client.async_get_clientsession(self.hass)
+        headers = {}
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
 
         try:
-            async with session.get(url) as resp:
+            async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
                     raise UpdateFailed(f"HTTP {resp.status} from {url}")
                 data = await resp.json()
@@ -54,6 +58,7 @@ class WaterRatesCoordinator(DataUpdateCoordinator[dict]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.api_url: str = entry.data[CONF_API_URL].rstrip("/")
+        self.api_token: str | None = entry.data.get(CONF_API_TOKEN)
         self.provider: str = entry.data[CONF_PROVIDER]
 
         super().__init__(
@@ -66,9 +71,12 @@ class WaterRatesCoordinator(DataUpdateCoordinator[dict]):
     async def _async_update_data(self) -> dict:
         url = f"{self.api_url}/water/rates/{self.provider}"
         session = aiohttp_client.async_get_clientsession(self.hass)
+        headers = {}
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
 
         try:
-            async with session.get(url) as resp:
+            async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
                     raise UpdateFailed(f"HTTP {resp.status} from {url}")
                 data = await resp.json()
