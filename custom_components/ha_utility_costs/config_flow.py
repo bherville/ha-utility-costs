@@ -28,18 +28,24 @@ async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = 
     api_url = api_url.rstrip("/")
     url = f"{api_url}/providers"
     session = aiohttp_client.async_get_clientsession(hass)
-    headers = {}
+    headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
 
     try:
-        async with session.get(url, headers=headers) as resp:
+        async with session.get(url, headers=headers, timeout=10) as resp:
+            if resp.status == 401:
+                raise ValueError("Unauthorized - check your API token")
+            if resp.status == 404:
+                raise ValueError("API endpoint not found - check your API URL")
             if resp.status != 200:
-                raise ValueError(f"HTTP {resp.status}")
+                raise ValueError(f"HTTP {resp.status}: {resp.reason}")
             data = await resp.json()
+    except ValueError:
+        raise
     except Exception as err:
-        _LOGGER.warning("Failed to fetch electric providers: %s", err)
-        return STATIC_ELECTRIC_PROVIDERS.copy()
+        _LOGGER.warning("Failed to fetch electric providers from %s: %s", url, err)
+        raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
     providers: dict[str, str] = {}
     items = data.get("providers") or []
@@ -60,18 +66,24 @@ async def _fetch_water_providers(hass, api_url: str, api_token: str | None = Non
     api_url = api_url.rstrip("/")
     url = f"{api_url}/water/providers"
     session = aiohttp_client.async_get_clientsession(hass)
-    headers = {}
+    headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
 
     try:
-        async with session.get(url, headers=headers) as resp:
+        async with session.get(url, headers=headers, timeout=10) as resp:
+            if resp.status == 401:
+                raise ValueError("Unauthorized - check your API token")
+            if resp.status == 404:
+                raise ValueError("API endpoint not found - check your API URL")
             if resp.status != 200:
-                raise ValueError(f"HTTP {resp.status}")
+                raise ValueError(f"HTTP {resp.status}: {resp.reason}")
             data = await resp.json()
+    except ValueError:
+        raise
     except Exception as err:
-        _LOGGER.warning("Failed to fetch water providers: %s", err)
-        return STATIC_WATER_PROVIDERS.copy()
+        _LOGGER.warning("Failed to fetch water providers from %s: %s", url, err)
+        raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
     providers: dict[str, str] = {}
     items = data.get("providers") or []
@@ -92,17 +104,26 @@ async def _validate_electric_provider(hass, api_url: str, provider_key: str, api
     api_url = api_url.rstrip("/")
     url = f"{api_url}/rates/{provider_key}/residential"
     session = aiohttp_client.async_get_clientsession(hass)
-    headers = {}
+    headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
 
-    async with session.get(url, headers=headers) as resp:
-        if resp.status != 200:
-            raise ValueError(f"Backend returned HTTP {resp.status}")
-        data = await resp.json()
+    try:
+        async with session.get(url, headers=headers, timeout=10) as resp:
+            if resp.status == 401:
+                raise ValueError("Unauthorized - check your API token")
+            if resp.status == 404:
+                raise ValueError(f"Provider '{provider_key}' not found on backend")
+            if resp.status != 200:
+                raise ValueError(f"Backend returned HTTP {resp.status}: {resp.reason}")
+            data = await resp.json()
+    except ValueError:
+        raise
+    except Exception as err:
+        raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
     if "rates" not in data:
-        raise ValueError("Response missing 'rates' key")
+        raise ValueError("Response missing 'rates' key - backend may not support this provider")
 
     return {
         "title": f"Electric Rates ({provider_key.upper()})",
@@ -115,17 +136,26 @@ async def _validate_water_provider(hass, api_url: str, provider_key: str, api_to
     api_url = api_url.rstrip("/")
     url = f"{api_url}/water/rates/{provider_key}"
     session = aiohttp_client.async_get_clientsession(hass)
-    headers = {}
+    headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
 
-    async with session.get(url, headers=headers) as resp:
-        if resp.status != 200:
-            raise ValueError(f"Backend returned HTTP {resp.status}")
-        data = await resp.json()
+    try:
+        async with session.get(url, headers=headers, timeout=10) as resp:
+            if resp.status == 401:
+                raise ValueError("Unauthorized - check your API token")
+            if resp.status == 404:
+                raise ValueError(f"Provider '{provider_key}' not found on backend")
+            if resp.status != 200:
+                raise ValueError(f"Backend returned HTTP {resp.status}: {resp.reason}")
+            data = await resp.json()
+    except ValueError:
+        raise
+    except Exception as err:
+        raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
     if "water" not in data:
-        raise ValueError("Response missing 'water' key")
+        raise ValueError("Response missing 'water' key - backend may not support this provider")
 
     return {
         "title": f"Water Rates ({provider_key.upper()})",
@@ -163,7 +193,28 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._providers = await _fetch_water_providers(
                         self.hass, self._api_url, self._api_token
                     )
-            except Exception:
+            except ValueError as err:
+                _LOGGER.error("Failed to fetch providers: %s", err)
+                errors["base"] = "cannot_connect"
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=vol.Schema(
+                        {
+                            vol.Required(CONF_API_URL, default=self._api_url or "http://localhost:8080"): str,
+                            vol.Required(CONF_API_TOKEN, default=self._api_token or ""): str,
+                            vol.Required(CONF_PROVIDER_TYPE, default=self._provider_type or PROVIDER_TYPE_ELECTRIC): vol.In(
+                                {
+                                    PROVIDER_TYPE_ELECTRIC: "Electric",
+                                    PROVIDER_TYPE_WATER: "Water",
+                                }
+                            ),
+                        }
+                    ),
+                    errors=errors,
+                    description_placeholders={"error_details": str(err)},
+                )
+            except Exception as err:
+                _LOGGER.exception("Unexpected error fetching providers")
                 if self._provider_type == PROVIDER_TYPE_ELECTRIC:
                     self._providers = STATIC_ELECTRIC_PROVIDERS.copy()
                 else:
