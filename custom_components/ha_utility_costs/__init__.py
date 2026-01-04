@@ -1,6 +1,7 @@
 """HA Utility Costs integration for Home Assistant."""
 from __future__ import annotations
 
+import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
@@ -13,6 +14,8 @@ from .const import (
     PROVIDER_TYPE_WATER,
 )
 from .coordinator import ElectricRatesCoordinator, WaterRatesCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 # Platforms to load
 PLATFORMS: list[str] = ["sensor"]
@@ -28,6 +31,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up HA Utility Costs from a config entry."""
+    _LOGGER.info("Setting up HA Utility Costs for provider: %s", entry.data.get(CONF_PROVIDER_TYPE, PROVIDER_TYPE_ELECTRIC))
     provider_type = entry.data.get(CONF_PROVIDER_TYPE, PROVIDER_TYPE_ELECTRIC)
 
     # Create the appropriate coordinator based on provider type
@@ -36,12 +40,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         coordinator = ElectricRatesCoordinator(hass, entry)
 
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as err:
+        _LOGGER.error("Error during first refresh: %s", err)
+        raise
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _LOGGER.info("HA Utility Costs setup completed successfully")
     return True
 
 
