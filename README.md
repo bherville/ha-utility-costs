@@ -43,8 +43,9 @@ A Home Assistant custom integration for tracking utility rates from [eRateManage
 1. Go to Settings → Devices & Services → Add Integration
 2. Search for "HA Utility Costs"
 3. Enter the eRateManager API URL (default: `https://rates.bherville.com`)
-4. Select the utility type (Electric or Water)
-5. Choose your provider
+4. (Optional) Enter an API Token if your eRateManager instance requires authentication
+5. Select the utility type (Electric or Water)
+6. Choose your provider
 
 ## Sensors
 
