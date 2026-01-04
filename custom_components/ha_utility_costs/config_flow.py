@@ -10,6 +10,7 @@ from homeassistant.helpers import aiohttp_client
 from .const import (
     DOMAIN,
     CONF_API_URL,
+    CONF_API_TOKEN,
     CONF_PROVIDER,
     CONF_PROVIDER_TYPE,
     PROVIDER_TYPE_ELECTRIC,
@@ -19,14 +20,17 @@ from .const import (
 )
 
 
-async def _fetch_electric_providers(hass, api_url: str) -> dict[str, str]:
+async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = None) -> dict[str, str]:
     """Fetch electric providers from the backend /providers endpoint."""
     api_url = api_url.rstrip("/")
     url = f"{api_url}/providers"
     session = aiohttp_client.async_get_clientsession(hass)
+    headers = {}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
 
     try:
-        async with session.get(url) as resp:
+        async with session.get(url, headers=headers) as resp:
             if resp.status != 200:
                 raise ValueError(f"HTTP {resp.status}")
             data = await resp.json()
@@ -47,14 +51,17 @@ async def _fetch_electric_providers(hass, api_url: str) -> dict[str, str]:
     return providers
 
 
-async def _fetch_water_providers(hass, api_url: str) -> dict[str, str]:
+async def _fetch_water_providers(hass, api_url: str, api_token: str | None = None) -> dict[str, str]:
     """Fetch water providers from the backend /water/providers endpoint."""
     api_url = api_url.rstrip("/")
     url = f"{api_url}/water/providers"
     session = aiohttp_client.async_get_clientsession(hass)
+    headers = {}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
 
     try:
-        async with session.get(url) as resp:
+        async with session.get(url, headers=headers) as resp:
             if resp.status != 200:
                 raise ValueError(f"HTTP {resp.status}")
             data = await resp.json()
@@ -75,13 +82,16 @@ async def _fetch_water_providers(hass, api_url: str) -> dict[str, str]:
     return providers
 
 
-async def _validate_electric_provider(hass, api_url: str, provider_key: str) -> dict:
+async def _validate_electric_provider(hass, api_url: str, provider_key: str, api_token: str | None = None) -> dict:
     """Validate that /rates/{provider}/residential works."""
     api_url = api_url.rstrip("/")
     url = f"{api_url}/rates/{provider_key}/residential"
     session = aiohttp_client.async_get_clientsession(hass)
+    headers = {}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
 
-    async with session.get(url) as resp:
+    async with session.get(url, headers=headers) as resp:
         if resp.status != 200:
             raise ValueError(f"Backend returned HTTP {resp.status}")
         data = await resp.json()
@@ -95,13 +105,16 @@ async def _validate_electric_provider(hass, api_url: str, provider_key: str) -> 
     }
 
 
-async def _validate_water_provider(hass, api_url: str, provider_key: str) -> dict:
+async def _validate_water_provider(hass, api_url: str, provider_key: str, api_token: str | None = None) -> dict:
     """Validate that /water/rates/{provider} works."""
     api_url = api_url.rstrip("/")
     url = f"{api_url}/water/rates/{provider_key}"
     session = aiohttp_client.async_get_clientsession(hass)
+    headers = {}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
 
-    async with session.get(url) as resp:
+    async with session.get(url, headers=headers) as resp:
         if resp.status != 200:
             raise ValueError(f"Backend returned HTTP {resp.status}")
         data = await resp.json()
@@ -122,6 +135,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._api_url: str | None = None
+        self._api_token: str | None = None
         self._provider_type: str | None = None
         self._providers: dict[str, str] = {}
 
@@ -131,17 +145,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._api_url = user_input[CONF_API_URL]
+            self._api_token = user_input.get(CONF_API_TOKEN)
             self._provider_type = user_input[CONF_PROVIDER_TYPE]
 
             # Fetch providers based on type
             try:
                 if self._provider_type == PROVIDER_TYPE_ELECTRIC:
                     self._providers = await _fetch_electric_providers(
-                        self.hass, self._api_url
+                        self.hass, self._api_url, self._api_token
                     )
                 else:
                     self._providers = await _fetch_water_providers(
-                        self.hass, self._api_url
+                        self.hass, self._api_url, self._api_token
                     )
             except Exception:
                 if self._provider_type == PROVIDER_TYPE_ELECTRIC:
@@ -154,6 +169,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required(CONF_API_URL, default="https://rates.bherville.com"): str,
+                vol.Optional(CONF_API_TOKEN): str,
                 vol.Required(CONF_PROVIDER_TYPE, default=PROVIDER_TYPE_ELECTRIC): vol.In(
                     {
                         PROVIDER_TYPE_ELECTRIC: "Electric",
@@ -180,11 +196,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 try:
                     if self._provider_type == PROVIDER_TYPE_ELECTRIC:
                         info = await _validate_electric_provider(
-                            self.hass, self._api_url, provider_key
+                            self.hass, self._api_url, provider_key, self._api_token
                         )
                     else:
                         info = await _validate_water_provider(
-                            self.hass, self._api_url, provider_key
+                            self.hass, self._api_url, provider_key, self._api_token
                         )
                 except Exception:
                     errors["base"] = "cannot_connect"
@@ -200,6 +216,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_PROVIDER: provider_key,
                         CONF_PROVIDER_TYPE: self._provider_type,
                     }
+                    if self._api_token:
+                        data[CONF_API_TOKEN] = self._api_token
                     return self.async_create_entry(title=info["title"], data=data)
 
         schema = vol.Schema(
