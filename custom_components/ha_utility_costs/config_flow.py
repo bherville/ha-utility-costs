@@ -1,11 +1,12 @@
 """Config flow for HA Utility Costs."""
 from __future__ import annotations
 
+import logging
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers import aiohttp_client, selector
 
 from .const import (
     DOMAIN,
@@ -18,6 +19,8 @@ from .const import (
     STATIC_ELECTRIC_PROVIDERS,
     STATIC_WATER_PROVIDERS,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = None) -> dict[str, str]:
@@ -34,7 +37,8 @@ async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = 
             if resp.status != 200:
                 raise ValueError(f"HTTP {resp.status}")
             data = await resp.json()
-    except Exception:
+    except Exception as err:
+        _LOGGER.warning("Failed to fetch electric providers: %s", err)
         return STATIC_ELECTRIC_PROVIDERS.copy()
 
     providers: dict[str, str] = {}
@@ -65,7 +69,8 @@ async def _fetch_water_providers(hass, api_url: str, api_token: str | None = Non
             if resp.status != 200:
                 raise ValueError(f"HTTP {resp.status}")
             data = await resp.json()
-    except Exception:
+    except Exception as err:
+        _LOGGER.warning("Failed to fetch water providers: %s", err)
         return STATIC_WATER_PROVIDERS.copy()
 
     providers: dict[str, str] = {}
@@ -169,7 +174,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required(CONF_API_URL, default="http://localhost:8080"): str,
-                vol.Optional(CONF_API_TOKEN): str,
+                vol.Required(CONF_API_TOKEN): str,
                 vol.Required(CONF_PROVIDER_TYPE, default=PROVIDER_TYPE_ELECTRIC): vol.In(
                     {
                         PROVIDER_TYPE_ELECTRIC: "Electric",
@@ -202,7 +207,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         info = await _validate_water_provider(
                             self.hass, self._api_url, provider_key, self._api_token
                         )
-                except Exception:
+                except Exception as err:
+                    _LOGGER.exception("Error connecting to provider: %s", err)
                     errors["base"] = "cannot_connect"
                 else:
                     # Unique per provider+type+api_url
@@ -222,7 +228,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_PROVIDER): vol.In(list(self._providers.keys())),
+                vol.Required(CONF_PROVIDER): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=list(self._providers.keys()),
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             }
         )
         return self.async_show_form(step_id="provider", data_schema=schema, errors=errors)
