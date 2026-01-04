@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to eRateManager",
-        "description": "Enter the API URL for your eRateManager instance, optionally provide an API token for authentication, and select the utility type.",
+        "description": "Enter the API URL for your eRateManager instance, provide an API token for authentication, and select the utility type.",
         "data": {
           "api_url": "API URL",
           "api_token": "API Token",
