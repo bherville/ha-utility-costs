@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+### Minor Changes
+
+- b88d87d: Update endpoints and payload parsing for eRateManager v2 API (`/api/v2/electric-rates/...`, `/api/v2/water-rates/...`, `electric_rates` response key, and array provider lists).
+
 ## 0.2.1
 
 ### Patch Changes
