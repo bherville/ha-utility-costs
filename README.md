@@ -3,7 +3,9 @@
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![GitHub Release](https://img.shields.io/github/release/bherville/ha-utility-costs.svg)](https://github.com/bherville/ha-utility-costs/releases)
 
-A Home Assistant custom integration for tracking utility rates from [eRateManager](https://github.com/bherville/eratemanager).
+A Home Assistant custom integration for tracking utility rates from [eRateManager](https://gitlab.com/bherville/apps/eratemanager).
+
+> **Note:** Development, issues, and merge requests are hosted on [GitLab](https://gitlab.com/bherville/home-assistant/ha-utility-costs). The [GitHub repository](https://github.com/bherville/ha-utility-costs) is an automated mirror maintained for HACS distribution.
 
 ## Features
 
@@ -72,7 +74,7 @@ A Home Assistant custom integration for tracking utility rates from [eRateManage
 
 ## Requirements
 
-This integration requires a running [eRateManager](https://github.com/bherville/eratemanager) backend instance.
+This integration requires a running [eRateManager](https://gitlab.com/bherville/apps/eratemanager) backend instance.
 
 ## Migration from ha-energy-cost
 
