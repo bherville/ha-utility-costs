@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 import voluptuous as vol
 
+import aiohttp
+
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import aiohttp_client, selector
@@ -14,6 +16,12 @@ from .const import (
     CONF_API_TOKEN,
     CONF_PROVIDER,
     CONF_PROVIDER_TYPE,
+    CONF_REFRESH_INTERVAL,
+    CONF_TRACKED_ENERGY_ENTITIES,
+    CONF_TRACKED_POWER_ENTITIES,
+    DEFAULT_REFRESH_INTERVAL,
+    MIN_REFRESH_INTERVAL,
+    MAX_REFRESH_INTERVAL,
     PROVIDER_TYPE_ELECTRIC,
     PROVIDER_TYPE_WATER,
     STATIC_ELECTRIC_PROVIDERS,
@@ -24,18 +32,25 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = None) -> dict[str, str]:
-    """Fetch electric providers from the backend /api/v2/electric-rates/providers endpoint."""
+    """Fetch electric providers from the backend API."""
     api_url = api_url.rstrip("/")
     url = f"{api_url}/api/v2/electric-rates/providers"
     session = aiohttp_client.async_get_clientsession(hass)
     headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
+    
+    _LOGGER.debug("Fetching electric providers from: %s", url)
+    _LOGGER.debug("Using token: %s", "Yes" if api_token else "No")
 
     try:
-        async with session.get(url, headers=headers, timeout=10) as resp:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with session.get(url, headers=headers, timeout=timeout) as resp:
+            _LOGGER.debug("Response status: %s", resp.status)
             if resp.status == 401:
                 raise ValueError("Unauthorized - check your API token")
+            if resp.status == 403:
+                raise ValueError("Forbidden - API token required or insufficient permissions")
             if resp.status == 404:
                 raise ValueError("API endpoint not found - check your API URL")
             if resp.status != 200:
@@ -48,6 +63,7 @@ async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = 
         raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
     providers: dict[str, str] = {}
+    # API returns an array directly, not wrapped in {"providers": [...]}
     items = data if isinstance(data, list) else (data.get("providers") or [])
     for item in items:
         key = item.get("key")
@@ -62,7 +78,7 @@ async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = 
 
 
 async def _fetch_water_providers(hass, api_url: str, api_token: str | None = None) -> dict[str, str]:
-    """Fetch water providers from the backend /api/v2/water-rates/providers endpoint."""
+    """Fetch water providers from the backend API."""
     api_url = api_url.rstrip("/")
     url = f"{api_url}/api/v2/water-rates/providers"
     session = aiohttp_client.async_get_clientsession(hass)
@@ -70,10 +86,17 @@ async def _fetch_water_providers(hass, api_url: str, api_token: str | None = Non
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
 
+    _LOGGER.debug("Fetching water providers from: %s", url)
+    _LOGGER.debug("Using token: %s", "Yes" if api_token else "No")
+
     try:
-        async with session.get(url, headers=headers, timeout=10) as resp:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with session.get(url, headers=headers, timeout=timeout) as resp:
+            _LOGGER.debug("Response status: %s", resp.status)
             if resp.status == 401:
                 raise ValueError("Unauthorized - check your API token")
+            if resp.status == 403:
+                raise ValueError("Forbidden - API token required or insufficient permissions")
             if resp.status == 404:
                 raise ValueError("API endpoint not found - check your API URL")
             if resp.status != 200:
@@ -86,6 +109,7 @@ async def _fetch_water_providers(hass, api_url: str, api_token: str | None = Non
         raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
     providers: dict[str, str] = {}
+    # API returns an array directly, not wrapped in {"providers": [...]}
     items = data if isinstance(data, list) else (data.get("providers") or [])
     for item in items:
         key = item.get("key")
@@ -100,7 +124,7 @@ async def _fetch_water_providers(hass, api_url: str, api_token: str | None = Non
 
 
 async def _validate_electric_provider(hass, api_url: str, provider_key: str, api_token: str | None = None) -> dict:
-    """Validate that /api/v2/electric-rates/{provider}/residential works."""
+    """Validate that the electric rates endpoint works."""
     api_url = api_url.rstrip("/")
     url = f"{api_url}/api/v2/electric-rates/{provider_key}/residential"
     session = aiohttp_client.async_get_clientsession(hass)
@@ -111,10 +135,13 @@ async def _validate_electric_provider(hass, api_url: str, provider_key: str, api
     _LOGGER.debug("Validating electric provider at: %s", url)
 
     try:
-        async with session.get(url, headers=headers, timeout=10) as resp:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with session.get(url, headers=headers, timeout=timeout) as resp:
             _LOGGER.debug("Response status: %s", resp.status)
             if resp.status == 401:
                 raise ValueError("Unauthorized - check your API token")
+            if resp.status == 403:
+                raise ValueError("Forbidden - API token required or insufficient permissions")
             if resp.status == 404:
                 raise ValueError(f"Provider '{provider_key}' not found on backend")
             if resp.status != 200:
@@ -126,7 +153,7 @@ async def _validate_electric_provider(hass, api_url: str, provider_key: str, api
         _LOGGER.error("Connection error validating provider: %s", err)
         raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
-    if "electric_rates" not in data and "rates" not in data:
+    if "electric_rates" not in data:
         raise ValueError("Response missing 'electric_rates' key - backend may not support this provider")
 
     return {
@@ -136,18 +163,24 @@ async def _validate_electric_provider(hass, api_url: str, provider_key: str, api
 
 
 async def _validate_water_provider(hass, api_url: str, provider_key: str, api_token: str | None = None) -> dict:
-    """Validate that /api/v2/water-rates/{provider} works."""
+    """Validate that the water rates endpoint works."""
     api_url = api_url.rstrip("/")
-    url = f"{api_url}/api/v2/water-rates/{provider_key}"
+    url = f"{api_url}/api/v2/water-rates/{provider_key}/rates"
     session = aiohttp_client.async_get_clientsession(hass)
     headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
 
+    _LOGGER.debug("Validating water provider at: %s", url)
+
     try:
-        async with session.get(url, headers=headers, timeout=10) as resp:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with session.get(url, headers=headers, timeout=timeout) as resp:
+            _LOGGER.debug("Response status: %s", resp.status)
             if resp.status == 401:
                 raise ValueError("Unauthorized - check your API token")
+            if resp.status == 403:
+                raise ValueError("Forbidden - API token required or insufficient permissions")
             if resp.status == 404:
                 raise ValueError(f"Provider '{provider_key}' not found on backend")
             if resp.status != 200:
@@ -178,6 +211,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._provider_type: str | None = None
         self._providers: dict[str, str] = {}
 
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
+
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
         """Step 1: Get API URL and utility type."""
         errors: dict[str, str] = {}
@@ -185,7 +225,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._api_url = user_input[CONF_API_URL]
             self._api_token = user_input.get(CONF_API_TOKEN)
+            if self._api_token:
+                self._api_token = self._api_token.strip()
             self._provider_type = user_input[CONF_PROVIDER_TYPE]
+            
+            _LOGGER.debug("API URL: %s", self._api_url)
+            _LOGGER.debug("API Token length: %s", len(self._api_token) if self._api_token else 0)
+            _LOGGER.debug("Provider type: %s", self._provider_type)
 
             # Fetch providers based on type
             try:
@@ -292,3 +338,66 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(step_id="provider", data_schema=schema, errors=errors)
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for HA Utility Costs."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._config_entry = config_entry
+
+    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current_interval = self._config_entry.options.get(
+            CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL
+        )
+        provider_type = self._config_entry.data.get(
+            CONF_PROVIDER_TYPE, PROVIDER_TYPE_ELECTRIC
+        )
+
+        schema_dict: dict = {
+            vol.Required(
+                CONF_REFRESH_INTERVAL,
+                default=current_interval,
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=MIN_REFRESH_INTERVAL,
+                    max=MAX_REFRESH_INTERVAL,
+                    step=60,
+                    unit_of_measurement="seconds",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+        }
+
+        if provider_type == PROVIDER_TYPE_ELECTRIC:
+            schema_dict[
+                vol.Optional(
+                    CONF_TRACKED_ENERGY_ENTITIES,
+                    default=self._config_entry.options.get(CONF_TRACKED_ENERGY_ENTITIES, []),
+                )
+            ] = selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor",
+                    device_class="energy",
+                    multiple=True,
+                )
+            )
+            schema_dict[
+                vol.Optional(
+                    CONF_TRACKED_POWER_ENTITIES,
+                    default=self._config_entry.options.get(CONF_TRACKED_POWER_ENTITIES, []),
+                )
+            ] = selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor",
+                    device_class="power",
+                    multiple=True,
+                )
+            )
+
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(schema_dict))

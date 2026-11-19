@@ -4,20 +4,33 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
     CONF_PROVIDER_TYPE,
+    CONF_TRACKED_ENERGY_ENTITIES,
+    CONF_TRACKED_POWER_ENTITIES,
+    HOURS_PER_MONTH,
     PROVIDER_TYPE_ELECTRIC,
     PROVIDER_TYPE_WATER,
+    API_STATUS_CONNECTED,
+    API_STATUS_AUTH_FAILED,
+    API_STATUS_UNREACHABLE,
+    API_STATUS_RATE_LIMITED,
+    API_STATUS_UNKNOWN,
 )
 from .coordinator import ElectricRatesCoordinator, WaterRatesCoordinator
 
@@ -44,8 +57,8 @@ async def async_setup_entry(
 def _create_electric_sensors(
     coordinator: ElectricRatesCoordinator, entry: ConfigEntry
 ) -> list[SensorEntity]:
-    """Create electric rate sensors."""
-    return [
+    """Create electric rate sensors and optional tracked-device cost sensors."""
+    entities: list[SensorEntity] = [
         EnergyRateSensor(coordinator, entry),
         FixedChargeSensor(coordinator, entry),
         RatesLastRefreshSensor(coordinator, entry),
@@ -53,7 +66,20 @@ def _create_electric_sensors(
         EnergyPriceSensor(coordinator, entry),
         DailyFixedCostSensor(coordinator, entry),
         MonthlyFixedCostSensor(coordinator, entry),
+        ApiStatusSensor(coordinator, entry),
     ]
+
+    for entity_id in entry.options.get(CONF_TRACKED_ENERGY_ENTITIES, []):
+        entities.append(TrackedEnergyCostSensor(coordinator, entry, entity_id, "daily"))
+        entities.append(TrackedEnergyCostSensor(coordinator, entry, entity_id, "monthly"))
+
+    power_entities = entry.options.get(CONF_TRACKED_POWER_ENTITIES, [])
+    for entity_id in power_entities:
+        entities.append(TrackedPowerProjectedCostSensor(coordinator, entry, entity_id))
+    if power_entities:
+        entities.append(TrackedTotalBurnRateSensor(coordinator, entry, power_entities))
+
+    return entities
 
 
 def _create_water_sensors(
@@ -65,16 +91,20 @@ def _create_water_sensors(
         WaterBaseChargeSensor(coordinator, entry),
         SewerUsageRateSensor(coordinator, entry),
         SewerBaseChargeSensor(coordinator, entry),
+        CombinedWaterSewerRateSensor(coordinator, entry),
         WaterRatesLastRefreshSensor(coordinator, entry),
         WaterRatesAgeHoursSensor(coordinator, entry),
+        WaterApiStatusSensor(coordinator, entry),
     ]
 
 
 def _get_residential_standard(data: dict) -> dict | None:
     """Extract residential_standard rates from electric data."""
-    rates = data.get("electric_rates") or data.get("rates") or {}
-    rs = rates.get("residential_standard") or {}
-    if not rs.get("is_present"):
+    # API returns "electric_rates" not "rates"
+    electric_rates = data.get("electric_rates") or {}
+    rs = electric_rates.get("residential_standard") or {}
+    # Check if we have actual rate data (is_present or has energy_rate)
+    if not rs.get("is_present") and rs.get("energy_rate_usd_per_kwh") is None:
         return None
     return rs
 
@@ -498,6 +528,37 @@ class SewerBaseChargeSensor(BaseWaterSensor):
             return None
 
 
+class CombinedWaterSewerRateSensor(BaseWaterSensor):
+    """Combined water and sewer usage rate in USD per gallon."""
+
+    _attr_native_unit_of_measurement = "USD/gal"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:water"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._provider_key}_combined_water_sewer_rate"
+
+    @property
+    def name(self) -> str:
+        return "Combined water & sewer usage rate"
+
+    @property
+    def native_value(self) -> float | None:
+        data = self.coordinator.data or {}
+        water = data.get("water") or {}
+        sewer = data.get("sewer") or {}
+        water_rate = water.get("use_rate")
+        if water_rate is None:
+            return None
+        try:
+            total = float(water_rate) + float(sewer.get("use_rate") or 0.0)
+            return round(total, 5)
+        except (TypeError, ValueError):
+            return None
+
+
 class WaterRatesLastRefreshSensor(BaseWaterSensor):
     """Timestamp of last refresh from backend."""
 
@@ -556,3 +617,389 @@ class WaterRatesAgeHoursSensor(BaseWaterSensor):
             return round(delta.total_seconds() / 3600.0, 2)
         except Exception:
             return None
+
+
+# =============================================================================
+# Diagnostic Sensors
+# =============================================================================
+
+
+class ApiStatusSensor(BaseElectricSensor):
+    """Diagnostic sensor showing API connection status."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._provider_key}_api_status"
+
+    @property
+    def name(self) -> str:
+        return "API status"
+
+    @property
+    def native_value(self) -> str:
+        return getattr(self.coordinator, "api_status", API_STATUS_UNKNOWN)
+
+    @property
+    def icon(self) -> str:
+        """Return icon based on status."""
+        status = self.native_value
+        if status == API_STATUS_CONNECTED:
+            return "mdi:check-network"
+        if status == API_STATUS_AUTH_FAILED:
+            return "mdi:key-alert"
+        if status == API_STATUS_UNREACHABLE:
+            return "mdi:network-off"
+        if status == API_STATUS_RATE_LIMITED:
+            return "mdi:speedometer-slow"
+        return "mdi:help-network"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional diagnostic attributes."""
+        attrs: dict[str, object] = {
+            "last_update_success": self.coordinator.last_update_success,
+            "provider": self.coordinator.provider,
+            "api_url": self.coordinator.api_url,
+        }
+        error_msg = getattr(self.coordinator, "_last_error_message", None)
+        if error_msg:
+            attrs["last_error"] = error_msg
+        return attrs
+
+    @property
+    def available(self) -> bool:
+        """Always available to show status even when API is down."""
+        return True
+
+
+class WaterApiStatusSensor(BaseWaterSensor):
+    """Diagnostic sensor showing water API connection status."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._provider_key}_water_api_status"
+
+    @property
+    def name(self) -> str:
+        return "API status"
+
+    @property
+    def native_value(self) -> str:
+        return getattr(self.coordinator, "api_status", API_STATUS_UNKNOWN)
+
+    @property
+    def icon(self) -> str:
+        """Return icon based on status."""
+        status = self.native_value
+        if status == API_STATUS_CONNECTED:
+            return "mdi:check-network"
+        if status == API_STATUS_AUTH_FAILED:
+            return "mdi:key-alert"
+        if status == API_STATUS_UNREACHABLE:
+            return "mdi:network-off"
+        if status == API_STATUS_RATE_LIMITED:
+            return "mdi:speedometer-slow"
+        return "mdi:help-network"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional diagnostic attributes."""
+        attrs: dict[str, object] = {
+            "last_update_success": self.coordinator.last_update_success,
+            "provider": self.coordinator.provider,
+            "api_url": self.coordinator.api_url,
+        }
+        error_msg = getattr(self.coordinator, "_last_error_message", None)
+        if error_msg:
+            attrs["last_error"] = error_msg
+        return attrs
+
+    @property
+    def available(self) -> bool:
+        """Always available to show status even when API is down."""
+        return True
+
+
+# =============================================================================
+# Optional Tracked Device Cost & Burn-Rate Sensors
+# =============================================================================
+
+
+def _current_energy_rate(coordinator: ElectricRatesCoordinator) -> float | None:
+    """Return total residential energy rate (USD/kWh) if available."""
+    rs = _get_residential_standard(coordinator.data or {})
+    if not rs:
+        return None
+    try:
+        return float(rs.get("energy_rate_usd_per_kwh") or 0.0) + float(
+            rs.get("tva_fuel_rate_usd_per_kwh") or 0.0
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _entity_label(hass: HomeAssistant | None, entity_id: str) -> str:
+    """Resolve a human-friendly name for a tracked source entity."""
+    if hass is not None:
+        state = hass.states.get(entity_id)
+        if state and state.attributes.get("friendly_name"):
+            return str(state.attributes["friendly_name"])
+    slug = entity_id.split(".", 1)[-1].replace("_", " ").strip()
+    return slug.title()
+
+
+def _read_kwh(state) -> float | None:
+    """Convert an energy sensor state into kWh."""
+    if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, "", "None"):
+        return None
+    try:
+        val = float(state.state)
+    except (TypeError, ValueError):
+        return None
+    unit = state.attributes.get("unit_of_measurement")
+    if unit == "Wh":
+        return val / 1000.0
+    if unit == "MWh":
+        return val * 1000.0
+    return val
+
+
+def _read_watts(state) -> float | None:
+    """Convert a power sensor state into Watts."""
+    if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, "", "None"):
+        return None
+    try:
+        val = float(state.state)
+    except (TypeError, ValueError):
+        return None
+    unit = state.attributes.get("unit_of_measurement")
+    if unit == "kW":
+        return val * 1000.0
+    return val
+
+
+def _period_key(period: str) -> str:
+    """Return current local day or month key for resetting accumulators."""
+    now = dt_util.now()
+    if period == "daily":
+        return now.strftime("%Y-%m-%d")
+    return now.strftime("%Y-%m")
+
+
+class TrackedEnergyCostSensor(BaseElectricSensor, RestoreSensor):
+    """Tracks daily or monthly USD cost for a user-selected energy (kWh) entity."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "USD"
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:currency-usd"
+
+    def __init__(
+        self,
+        coordinator: ElectricRatesCoordinator,
+        entry: ConfigEntry,
+        source_entity_id: str,
+        period: str,
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._source_entity_id = source_entity_id
+        self._period = period
+        self._kwh_used: float = 0.0
+        self._last_meter_kwh: float | None = None
+        self._period_key: str = _period_key(period)
+
+    @property
+    def unique_id(self) -> str:
+        safe_src = self._source_entity_id.replace(".", "_")
+        return f"{self._entry.entry_id}_{self._provider_key}_{safe_src}_{self._period}_cost"
+
+    @property
+    def name(self) -> str:
+        label = _entity_label(self.hass, self._source_entity_id)
+        suffix = "Cost Today" if self._period == "daily" else "Cost This Month"
+        return f"{label} {suffix}"
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._current_cost() is not None
+
+    def _current_cost(self) -> float | None:
+        rate = _current_energy_rate(self.coordinator)
+        if rate is None:
+            return None
+        return round(self._kwh_used * rate, 2)
+
+    @property
+    def native_value(self) -> float | None:
+        return self._current_cost()
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            "source_entity": self._source_entity_id,
+            "period": self._period,
+            "period_key": self._period_key,
+            "kwh_used": round(self._kwh_used, 4),
+            "last_meter_kwh": self._last_meter_kwh,
+        }
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        current_key = _period_key(self._period)
+        if last_state and last_state.attributes.get("period_key") == current_key:
+            try:
+                self._kwh_used = float(last_state.attributes.get("kwh_used") or 0.0)
+            except (TypeError, ValueError):
+                self._kwh_used = 0.0
+            last_meter = last_state.attributes.get("last_meter_kwh")
+            if last_meter is not None:
+                try:
+                    self._last_meter_kwh = float(last_meter)
+                except (TypeError, ValueError):
+                    self._last_meter_kwh = None
+        if self._last_meter_kwh is None:
+            self._last_meter_kwh = _read_kwh(self.hass.states.get(self._source_entity_id))
+
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [self._source_entity_id], self._handle_source_change
+            )
+        )
+
+    @callback
+    def _handle_source_change(self, event: Event) -> None:
+        new_state = event.data.get("new_state")
+        new_kwh = _read_kwh(new_state)
+        if new_kwh is None:
+            return
+
+        current_key = _period_key(self._period)
+        if current_key != self._period_key:
+            self._period_key = current_key
+            self._kwh_used = 0.0
+            self._last_meter_kwh = new_kwh
+        elif self._last_meter_kwh is None:
+            self._last_meter_kwh = new_kwh
+        else:
+            delta = new_kwh - self._last_meter_kwh
+            if delta > 0:
+                self._kwh_used += delta
+            self._last_meter_kwh = new_kwh
+
+        self.async_write_ha_state()
+
+
+class TrackedPowerProjectedCostSensor(BaseElectricSensor):
+    """Projected monthly USD burn rate from a user-selected power (W/kW) entity."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "USD"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:chart-line"
+
+    def __init__(
+        self,
+        coordinator: ElectricRatesCoordinator,
+        entry: ConfigEntry,
+        source_entity_id: str,
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._source_entity_id = source_entity_id
+
+    @property
+    def unique_id(self) -> str:
+        safe_src = self._source_entity_id.replace(".", "_")
+        return f"{self._entry.entry_id}_{self._provider_key}_{safe_src}_projected_monthly_cost"
+
+    @property
+    def name(self) -> str:
+        label = _entity_label(self.hass, self._source_entity_id)
+        return f"{label} Projected Monthly Cost"
+
+    @property
+    def native_value(self) -> float | None:
+        rate = _current_energy_rate(self.coordinator)
+        watts = _read_watts(self.hass.states.get(self._source_entity_id) if self.hass else None)
+        if rate is None or watts is None:
+            return None
+        return round((watts / 1000.0) * rate * HOURS_PER_MONTH, 2)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        watts = _read_watts(self.hass.states.get(self._source_entity_id) if self.hass else None)
+        return {
+            "source_entity": self._source_entity_id,
+            "current_watts": watts,
+            "hours_per_month": HOURS_PER_MONTH,
+        }
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [self._source_entity_id], self._handle_power_change
+            )
+        )
+
+    @callback
+    def _handle_power_change(self, _event: Event) -> None:
+        self.async_write_ha_state()
+
+
+class TrackedTotalBurnRateSensor(BaseElectricSensor):
+    """Combined projected monthly USD burn rate across all tracked power entities."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "USD"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:lightning-bolt"
+
+    def __init__(
+        self,
+        coordinator: ElectricRatesCoordinator,
+        entry: ConfigEntry,
+        source_entity_ids: list[str],
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._source_entity_ids = list(source_entity_ids)
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._provider_key}_tracked_total_projected_monthly_cost"
+
+    @property
+    def name(self) -> str:
+        return "Tracked devices projected monthly cost"
+
+    @property
+    def native_value(self) -> float | None:
+        rate = _current_energy_rate(self.coordinator)
+        if rate is None or not self.hass:
+            return None
+        total_watts = 0.0
+        for entity_id in self._source_entity_ids:
+            watts = _read_watts(self.hass.states.get(entity_id))
+            if watts is not None:
+                total_watts += watts
+        return round((total_watts / 1000.0) * rate * HOURS_PER_MONTH, 2)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"source_entities": self._source_entity_ids}
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, self._source_entity_ids, self._handle_power_change
+            )
+        )
+
+    @callback
+    def _handle_power_change(self, _event: Event) -> None:
+        self.async_write_ha_state()

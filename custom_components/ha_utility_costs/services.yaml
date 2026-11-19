@@ -1,0 +1,11 @@
+force_refresh:
+  name: Force Refresh
+  description: Trigger an immediate refresh of utility rate data from the eRateManager backend.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The config entry ID of the HA Utility Costs integration to refresh.
+      required: true
+      example: "01KEG84N25R68N4K2Z7T0W7EYZ"
+      selector:
+        text:

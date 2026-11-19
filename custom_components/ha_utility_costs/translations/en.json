@@ -60,6 +60,42 @@
       },
       "sewer_base_charge": {
         "name": "Sewer base charge"
+      },
+      "combined_water_sewer_rate": {
+        "name": "Combined water & sewer usage rate"
+      },
+      "api_status": {
+        "name": "API status"
+      }
+    },
+    "binary_sensor": {
+      "api_problem": {
+        "name": "API problem"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure HA Utility Costs",
+        "description": "Adjust polling interval and optionally select energy (kWh) or power (W/kW) sensors for native cost and projected monthly burn-rate tracking.",
+        "data": {
+          "refresh_interval": "Refresh Interval (seconds)",
+          "tracked_energy_entities": "Tracked Energy Sensors (Daily & Monthly Cost)",
+          "tracked_power_entities": "Tracked Power Sensors (Projected Monthly Burn Rate)"
+        }
+      }
+    }
+  },
+  "services": {
+    "force_refresh": {
+      "name": "Force Refresh",
+      "description": "Force a refresh of utility rates from the eratemanager backend.",
+      "fields": {
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "The config entry ID of the integration to refresh."
+        }
       }
     }
   }
