@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+### Patch Changes
+
+- 33c057d: Migrate canonical repository to GitLab (`bherville/home-assistant/ha-utility-costs`) with automated GitHub mirroring for HACS
+
 ## 0.2.0
 
 ### Minor Changes
