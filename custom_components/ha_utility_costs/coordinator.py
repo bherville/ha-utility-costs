@@ -32,7 +32,7 @@ class ElectricRatesCoordinator(DataUpdateCoordinator[dict]):
         )
 
     async def _async_update_data(self) -> dict:
-        url = f"{self.api_url}/rates/electric/{self.provider}/residential"
+        url = f"{self.api_url}/api/v2/electric-rates/{self.provider}/residential"
         session = aiohttp_client.async_get_clientsession(self.hass)
         headers = {"User-Agent": "ha-utility-costs/1.0"}
         if self.api_token:
@@ -75,7 +75,7 @@ class WaterRatesCoordinator(DataUpdateCoordinator[dict]):
         )
 
     async def _async_update_data(self) -> dict:
-        url = f"{self.api_url}/water/rates/{self.provider}"
+        url = f"{self.api_url}/api/v2/water-rates/{self.provider}"
         session = aiohttp_client.async_get_clientsession(self.hass)
         headers = {"User-Agent": "ha-utility-costs/1.0"}
         if self.api_token:

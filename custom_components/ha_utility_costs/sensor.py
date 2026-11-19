@@ -72,7 +72,7 @@ def _create_water_sensors(
 
 def _get_residential_standard(data: dict) -> dict | None:
     """Extract residential_standard rates from electric data."""
-    rates = data.get("rates") or {}
+    rates = data.get("electric_rates") or data.get("rates") or {}
     rs = rates.get("residential_standard") or {}
     if not rs.get("is_present"):
         return None

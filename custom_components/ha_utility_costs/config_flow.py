@@ -24,9 +24,9 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = None) -> dict[str, str]:
-    """Fetch electric providers from the backend /providers endpoint."""
+    """Fetch electric providers from the backend /api/v2/electric-rates/providers endpoint."""
     api_url = api_url.rstrip("/")
-    url = f"{api_url}/providers"
+    url = f"{api_url}/api/v2/electric-rates/providers"
     session = aiohttp_client.async_get_clientsession(hass)
     headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
@@ -48,7 +48,7 @@ async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = 
         raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
     providers: dict[str, str] = {}
-    items = data.get("providers") or []
+    items = data if isinstance(data, list) else (data.get("providers") or [])
     for item in items:
         key = item.get("key")
         name = item.get("name") or key
@@ -62,9 +62,9 @@ async def _fetch_electric_providers(hass, api_url: str, api_token: str | None = 
 
 
 async def _fetch_water_providers(hass, api_url: str, api_token: str | None = None) -> dict[str, str]:
-    """Fetch water providers from the backend /water/providers endpoint."""
+    """Fetch water providers from the backend /api/v2/water-rates/providers endpoint."""
     api_url = api_url.rstrip("/")
-    url = f"{api_url}/water/providers"
+    url = f"{api_url}/api/v2/water-rates/providers"
     session = aiohttp_client.async_get_clientsession(hass)
     headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
@@ -86,7 +86,7 @@ async def _fetch_water_providers(hass, api_url: str, api_token: str | None = Non
         raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
     providers: dict[str, str] = {}
-    items = data.get("providers") or []
+    items = data if isinstance(data, list) else (data.get("providers") or [])
     for item in items:
         key = item.get("key")
         name = item.get("name") or key
@@ -100,9 +100,9 @@ async def _fetch_water_providers(hass, api_url: str, api_token: str | None = Non
 
 
 async def _validate_electric_provider(hass, api_url: str, provider_key: str, api_token: str | None = None) -> dict:
-    """Validate that /rates/electric/{provider}/residential works."""
+    """Validate that /api/v2/electric-rates/{provider}/residential works."""
     api_url = api_url.rstrip("/")
-    url = f"{api_url}/rates/electric/{provider_key}/residential"
+    url = f"{api_url}/api/v2/electric-rates/{provider_key}/residential"
     session = aiohttp_client.async_get_clientsession(hass)
     headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
@@ -126,8 +126,8 @@ async def _validate_electric_provider(hass, api_url: str, provider_key: str, api
         _LOGGER.error("Connection error validating provider: %s", err)
         raise ValueError(f"Connection error: {type(err).__name__}: {err}")
 
-    if "rates" not in data:
-        raise ValueError("Response missing 'rates' key - backend may not support this provider")
+    if "electric_rates" not in data and "rates" not in data:
+        raise ValueError("Response missing 'electric_rates' key - backend may not support this provider")
 
     return {
         "title": f"Electric Rates ({provider_key.upper()})",
@@ -136,9 +136,9 @@ async def _validate_electric_provider(hass, api_url: str, provider_key: str, api
 
 
 async def _validate_water_provider(hass, api_url: str, provider_key: str, api_token: str | None = None) -> dict:
-    """Validate that /water/rates/{provider} works."""
+    """Validate that /api/v2/water-rates/{provider} works."""
     api_url = api_url.rstrip("/")
-    url = f"{api_url}/water/rates/{provider_key}"
+    url = f"{api_url}/api/v2/water-rates/{provider_key}"
     session = aiohttp_client.async_get_clientsession(hass)
     headers = {"User-Agent": "ha-utility-costs/1.0"}
     if api_token:
